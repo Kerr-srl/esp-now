@@ -27,9 +27,16 @@
 
 static const char* TAG = "espnow_sec";
 
+struct {
+    SemaphoreHandle_t handle;
+    StaticSemaphore_t buffer;
+} g_mutex;
+
 esp_err_t espnow_sec_init(espnow_sec_t *sec)
 {
     ESP_PARAM_CHECK(sec);
+
+    g_mutex.handle = xSemaphoreCreateMutexStatic(&g_mutex.buffer);
 
     memset(sec, 0, sizeof(espnow_sec_t));
     sec->cipher_ctx = (mbedtls_ccm_context *)ESP_CALLOC(1, sizeof(mbedtls_ccm_context));
@@ -89,8 +96,10 @@ esp_err_t espnow_sec_auth_encrypt(espnow_sec_t *sec, const uint8_t *input, size_
     }
 
     int ret = ESP_OK;
+    xSemaphoreTake(g_mutex.handle, portMAX_DELAY);
     ret = mbedtls_ccm_encrypt_and_tag((mbedtls_ccm_context *)sec->cipher_ctx, ilen, sec->iv, sec->iv_len, NULL, 0,
                                     input, output, output + ilen, tag_len);
+    xSemaphoreGive(g_mutex.handle);
     *olen = ilen + tag_len;
 
     if (ret != 0) {
@@ -121,9 +130,11 @@ esp_err_t espnow_sec_auth_decrypt(espnow_sec_t *sec, const uint8_t *input, size_
 
     int ret = ESP_OK;
     ilen -= tag_len;
-    ret = mbedtls_ccm_auth_decrypt((mbedtls_ccm_context *)sec->cipher_ctx, ilen, 
+    xSemaphoreTake(g_mutex.handle, portMAX_DELAY);
+    ret = mbedtls_ccm_auth_decrypt((mbedtls_ccm_context *)sec->cipher_ctx, ilen,
                                         sec->iv, sec->iv_len, NULL, 0,
                                         input, output, input + ilen, tag_len);
+    xSemaphoreGive(g_mutex.handle);
     *olen = ilen;
 
     if (ret != 0) {
